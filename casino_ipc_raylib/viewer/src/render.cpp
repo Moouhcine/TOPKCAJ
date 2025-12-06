@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 #include <cmath>
+#include <vector>
 #include "layout_config.hpp"
 
 static Rectangle center_rect(float cx, float cy, float w, float h) {
@@ -137,7 +138,7 @@ static void draw_players(const Assets& assets, const SceneState& scene) {
         }
         // Label Pn au-dessus (offset 15px gauche, 62px haut) basé sur l'id réel
         int labelId = pv.id;
-        DrawText(TextFormat("P%d", labelId + 1), pv.pos.x - 15.0f, pv.pos.y - 62.0f, (int)(22 * ps), Color{255, 230, 200, 255});
+        DrawText(TextFormat("P%d", labelId + 1), pv.pos.x - 35.0f, pv.pos.y - 224.0f, (int)(22 * ps), Color{255, 230, 200, 255});
         if (pv.pulse > 0.01f) {
             float alpha = std::min(1.0f, pv.pulse);
             DrawCircleGradient(pv.pos.x, pv.pos.y - 40, 36 + pv.pulse * 20.0f, ColorAlpha(YELLOW, alpha * 0.6f), BLANK);
@@ -210,13 +211,23 @@ static void draw_slot_panel(const Assets& assets, const RenderSettings& cfg, con
     float startX = 20.0f + gLayout.panelOffsetX;
     float gap = 10.0f * scale;
     float startY = cfg.height - (rowH + gap) * std::min(snap.playerCount, casino::MAX_PLAYERS) - 100.0f * scale + gLayout.panelOffsetY;
-    for (int i = 0; i < snap.playerCount && i < casino::MAX_PLAYERS; ++i) {
+    int count = std::min(snap.playerCount, casino::MAX_PLAYERS);
+    std::vector<int> order;
+    order.reserve(count);
+    if (count == 1) {
+        order.push_back(0);
+    } else {
+        for (int i = 1; i < count; ++i) order.push_back(i);
+        order.push_back(0);
+    }
+    for (int rowIdx = 0; rowIdx < (int)order.size(); ++rowIdx) {
+        int i = order[rowIdx];
         const auto& pv = scene.players[i];
-        Rectangle row = {startX, startY + i * (rowH + gap), width, rowH};
+        Rectangle row = {startX, startY + rowIdx * (rowH + gap), width, rowH};
         draw_texture_or_rect(assets.textures.panel, row, WHITE, Color{16, 32, 48, 180});
         int pid = scene.players[i].id;
         Color nameCol = pv.spinning ? YELLOW : RAYWHITE;
-        DrawTextEx(assets.uiFont, TextFormat("P%d", pid + 1), {row.x + 8, row.y + 6 * scale}, 16 * scale, 1, nameCol);
+        DrawTextEx(assets.uiFont, TextFormat("P%d", rowIdx + 1), {row.x + 8, row.y + 6 * scale}, 16 * scale, 1, nameCol);
         Color deltaCol = pv.lastDelta >= 0 ? Color{120, 255, 120, 255} : Color{255, 120, 120, 255};
         float bounce = 0.0f;
         if (scene.lastResultTime[pid] > 0.0f) {
@@ -231,8 +242,8 @@ static void draw_slot_panel(const Assets& assets, const RenderSettings& cfg, con
         float blockW = 36.0f * scale;
         float blockH = rowH - 8.0f * scale;
         float hx = row.x + 120 * scale;
-        int startIdx = (int)std::max(0, (int)hist.size() - 5);
-        for (int h = 0; h < 5; ++h) {
+        int startIdx = (int)std::max(0, (int)hist.size() - 4);
+        for (int h = 0; h < 4; ++h) {
             int idx = startIdx + h;
             Color bcol = Color{60, 60, 60, 180};
             int val = 0;

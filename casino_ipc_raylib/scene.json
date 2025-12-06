@@ -1,0 +1,24 @@
+{
+  "ui": {
+    "slotScale": 1.0,
+    "symbolScale": 1.0,
+    "playerScale": 1.0,
+    "windowW": 16.0,
+    "windowH": 16.0,
+    "windowOffsetX": 68.0,
+    "windowOffsetY": 96.0,
+    "panelScale": 1.0,
+    "panelOffsetX": 0.0,
+    "panelOffsetY": 0.0,
+    "barOffsetY": 0.0,
+    "logOffsetY": 0.0
+  },
+  "slots": [
+    {"id": 0, "x": 572.0, "y": 262.0, "slotScale": 1.0, "symbolScale": 1.0, "playerScale": 1.0, "windowW": 16.0, "windowH": 16.0, "windowOffsetX": 68.0, "windowOffsetY": 96.0},
+    {"id": 1, "x": 832.0, "y": 112.0, "slotScale": 1.0, "symbolScale": 1.0, "playerScale": 1.0, "windowW": 16.0, "windowH": 16.0, "windowOffsetX": 68.0, "windowOffsetY": 96.0},
+    {"id": 2, "x": 1092.0, "y": 262.0, "slotScale": 1.0, "symbolScale": 1.0, "playerScale": 1.0, "windowW": 16.0, "windowH": 16.0, "windowOffsetX": 68.0, "windowOffsetY": 96.0},
+    {"id": 3, "x": 1092.0, "y": 562.0, "slotScale": 1.0, "symbolScale": 1.0, "playerScale": 1.0, "windowW": 16.0, "windowH": 16.0, "windowOffsetX": 68.0, "windowOffsetY": 96.0},
+    {"id": 4, "x": 832.0, "y": 712.0, "slotScale": 1.0, "symbolScale": 1.0, "playerScale": 1.0, "windowW": 16.0, "windowH": 16.0, "windowOffsetX": 68.0, "windowOffsetY": 96.0},
+    {"id": 5, "x": 572.0, "y": 562.0, "slotScale": 1.0, "symbolScale": 1.0, "playerScale": 1.0, "windowW": 16.0, "windowH": 16.0, "windowOffsetX": 68.0, "windowOffsetY": 96.0}
+  ]
+}
