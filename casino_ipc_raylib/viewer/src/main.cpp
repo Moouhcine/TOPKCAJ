@@ -14,6 +14,9 @@
 #include "layout_config.hpp"
 
 int main() {
+    // VM / faible framerate : augmente le buffer audio pour éviter les underflows/grésillements
+    SetAudioStreamBufferSizeDefault(8192);
+    InitAudioDevice();
     RenderSettings cfg{};
     const char* envW = std::getenv("VIEWER_W");
     const char* envH = std::getenv("VIEWER_H");
@@ -38,6 +41,10 @@ int main() {
         assetBase = "assets"; // fallback if executed from viewer/
     }
     Assets assets = load_assets(assetBase);
+    if (assets.audio.hasAudio && assets.audio.ambient.ctxData) {
+        SetMusicVolume(assets.audio.ambient, 0.35f);
+        PlayMusicStream(assets.audio.ambient);
+    }
 
     LayoutParams lp{};
     std::vector<SlotLayout> slots(casino::MAX_PLAYERS);
@@ -70,40 +77,59 @@ int main() {
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
 
-        if (attached) {
-            if (!copy_snapshot(*attachmentOpt, snap)) {
-                attached = false;
-            }
-        } else {
-            // fallback animation if no SHM
-            auto now = std::chrono::steady_clock::now();
-            float t = std::chrono::duration<float>(now - lastFallback).count();
-            lastFallback = now;
-            snap.playerCount = slotPositions.empty() ? 4 : (int)std::min<size_t>(slotPositions.size(), casino::MAX_PLAYERS);
-            snap.tick++;
-            snap.jackpot = 1000 + (int)(200 * std::sin(GetTime()));
-            snap.rounds++;
-            for (int i = 0; i < snap.playerCount; ++i) {
-                snap.players[i].id = i;
-                if (i < (int)slotPositions.size()) {
-                    snap.players[i].x = slotPositions[i].x;
-                    snap.players[i].y = slotPositions[i].y;
-                } else {
-                    snap.players[i].x = 400 + 200 * std::cos(GetTime() * 0.8f + i);
-                    snap.players[i].y = 400 + 140 * std::sin(GetTime() * 0.9f + i);
+        if (!scene.gameOver) {
+            if (attached) {
+                if (!copy_snapshot(*attachmentOpt, snap)) {
+                    attached = false;
                 }
-                snap.players[i].animState = (i % 2 == 0) ? casino::ANIM_WALK : casino::ANIM_IDLE;
-                snap.players[i].pulse = 0.2f + 0.2f * std::sin(t + i);
-                snap.players[i].symbols[0] = i;
-                snap.players[i].symbols[1] = (i + 1) % 6;
-                snap.players[i].symbols[2] = (i + 2) % 6;
-                snap.players[i].lastDelta = (i % 2 == 0) ? 80 : -20;
-                snap.players[i].spinning = (std::fmod(GetTime() + i, 3.0) < 1.5);
-                snap.players[i].spinProgress = std::fmod(GetTime() + i, 3.0f) / 3.0f;
+            } else {
+                // fallback animation if no SHM
+                auto now = std::chrono::steady_clock::now();
+                float t = std::chrono::duration<float>(now - lastFallback).count();
+                lastFallback = now;
+                snap.playerCount = slotPositions.empty() ? 4 : (int)std::min<size_t>(slotPositions.size(), casino::MAX_PLAYERS);
+                snap.tick++;
+                snap.jackpot = 1000 + (int)(200 * std::sin(GetTime()));
+                snap.rounds++;
+                for (int i = 0; i < snap.playerCount; ++i) {
+                    snap.players[i].id = i;
+                    if (i < (int)slotPositions.size()) {
+                        snap.players[i].x = slotPositions[i].x;
+                        snap.players[i].y = slotPositions[i].y;
+                    } else {
+                        snap.players[i].x = 400 + 200 * std::cos(GetTime() * 0.8f + i);
+                        snap.players[i].y = 400 + 140 * std::sin(GetTime() * 0.9f + i);
+                    }
+                    snap.players[i].animState = (i % 2 == 0) ? casino::ANIM_WALK : casino::ANIM_IDLE;
+                    snap.players[i].pulse = 0.2f + 0.2f * std::sin(t + i);
+                    snap.players[i].symbols[0] = i;
+                    snap.players[i].symbols[1] = (i + 1) % 6;
+                    snap.players[i].symbols[2] = (i + 2) % 6;
+                    snap.players[i].lastDelta = (i % 2 == 0) ? 80 : -20;
+                    snap.players[i].spinning = (std::fmod(GetTime() + i, 3.0) < 1.5);
+                    snap.players[i].spinProgress = std::fmod(GetTime() + i, 3.0f) / 3.0f;
+                }
             }
+
+            update_scene(scene, snap, dt);
         }
 
-        update_scene(scene, snap, dt);
+        if (assets.audio.hasAudio) {
+            if (assets.audio.ambient.ctxData) {
+                UpdateMusicStream(assets.audio.ambient); // garder le stream fluide même en game over
+            }
+            if (scene.triggerWinSfx && assets.audio.win.frameCount > 0) {
+                PlaySound(assets.audio.win);
+            }
+            if (scene.triggerEmptySfx) {
+                if (assets.audio.ambient.ctxData) StopMusicStream(assets.audio.ambient);
+                if (assets.audio.empty.frameCount > 0) {
+                    PlaySound(assets.audio.empty);
+                }
+            }
+        }
+        scene.triggerWinSfx = false;
+        scene.triggerEmptySfx = false;
         render_frame(assets, scene, snap, cfg);
     }
 
@@ -111,6 +137,7 @@ int main() {
         detach_shared_state(*attachmentOpt);
     }
     unload_assets(assets);
+    CloseAudioDevice();
     CloseWindow();
     return 0;
 }

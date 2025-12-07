@@ -27,12 +27,20 @@ static float draw_bitmap_text(const Assets& assets, const std::string& text, Vec
     }
     float scale = fontSize / (float)assets.bitmapFont.maxHeight;
     float x = pos.x;
+    char prev = 0;
+    float prevWidth = 0.0f;
     for (char raw : text) {
         if (raw == ' ') {
             x += fontSize * 0.45f;
+            prev = raw;
+            prevWidth = 0.0f;
             continue;
         }
         char ch = (char)std::toupper((unsigned char)raw);
+        if (prev == 'A' || prev == 'H' || prev == 'K' || prev == 'R') {
+            float overlap = prevWidth > 0.0f ? prevWidth * 0.48f : fontSize * 0.36f;
+            x -= overlap; // marge négative marquée pour chevauchement visible
+        }
         auto it = assets.bitmapFont.glyphs.find(ch);
         if (it != assets.bitmapFont.glyphs.end() && it->second.texture.id != 0) {
             const auto& g = it->second;
@@ -42,12 +50,15 @@ static float draw_bitmap_text(const Assets& assets, const std::string& text, Vec
             Rectangle dst{x, pos.y, w, h};
             DrawTexturePro(g.texture, src, dst, {0, 0}, 0.0f, tint);
             x += g.advance * scale + spacing;
+            prevWidth = w;
         } else {
             std::string tmp(1, raw);
             Vector2 sz = MeasureTextEx(assets.uiFont, tmp.c_str(), fontSize, spacing);
             DrawTextEx(assets.uiFont, tmp.c_str(), {x, pos.y}, fontSize, spacing, tint);
             x += sz.x + spacing;
+            prevWidth = sz.x;
         }
+        prev = ch;
     }
     return x - pos.x;
 }
@@ -122,13 +133,14 @@ static void draw_slots(const Assets& assets, const RenderSettings&, const Casino
         float sy = gSlotPosSet[sid] ? gSlotPos[sid].y : scene.players[i].pos.y;
         float baseW = 256.0f * sl.slotScale;
         float baseH = 256.0f * sl.slotScale;
+        bool spinning = !scene.gameOver && pv.spinning;
         Rectangle dest;
         if (gSlotPosSet[sid]) {
             dest = {sx, sy, baseW, baseH}; // LDtk coords are top-left
         } else {
             dest = center_rect(sx, sy, baseW, baseH);
         }
-        const Texture2D* machine = pv.spinning ? &assets.textures.machineDown : &assets.textures.machineIdle;
+        const Texture2D* machine = spinning ? &assets.textures.machineDown : &assets.textures.machineIdle;
         if (!machine || machine->id == 0) machine = &assets.textures.slot;
         draw_texture_or_rect(*machine, dest, WHITE, Color{140, 70, 70, 255});
         // reel strip
@@ -139,10 +151,10 @@ static void draw_slots(const Assets& assets, const RenderSettings&, const Casino
         for (int s = 0; s < 3; ++s) {
             float bx = startX + s * (windowW + 19.0f * sl.symbolScale);
             float by = startY;
-            float jitter = pv.spinning ? (float)(fmod(GetTime() * 4.0 + s * 0.25, 1.0) * 10.0) : 0.0f;
+            float jitter = spinning ? (float)(fmod(GetTime() * 4.0 + s * 0.25, 1.0) * 10.0) : 0.0f;
             Rectangle box = {bx, by + jitter, windowW, windowH};
             int sym = displayed_symbol(pv, s, i);
-            draw_symbol_box(box, sym, pv.spinning, assets.textures);
+            draw_symbol_box(box, sym, spinning, assets.textures);
         }
     }
 }
@@ -156,8 +168,9 @@ static void draw_players(const Assets& assets, const SceneState& scene) {
             sl.playerScale = gLayout.playerScale;
         }
         float ps = sl.playerScale;
-        int pid = pv.id;
-        bool winPose = (pid >= 0 && pid < casino::MAX_PLAYERS) ? scene.showWinPose[pid] : false;
+        int slot = (pv.id >= 0 && pv.id < casino::MAX_PLAYERS) ? pv.id : i;
+        bool winPose = (slot >= 0 && slot < casino::MAX_PLAYERS) ? scene.showWinPose[slot] : false;
+        if (scene.gameOver || pv.spinning) winPose = false;
         const Texture2D* sheet = &assets.textures.playerIdle;
         int frameCount = 4;
         bool useFullFrame = false;
@@ -172,7 +185,8 @@ static void draw_players(const Assets& assets, const SceneState& scene) {
             sheet = &assets.textures.playerWalk;
         }
 
-        int frame = (GetFrameTime() <= 0.0f) ? 0 : (int)(GetTime() * 6.0f) % frameCount;
+        if (scene.gameOver) frameCount = 1;
+        int frame = scene.gameOver ? 0 : ((GetFrameTime() <= 0.0f) ? 0 : (int)(GetTime() * 6.0f) % frameCount);
         Rectangle src;
         if (useFullFrame || sheet == &assets.textures.playerBack) {
             src = {0, 0, (float)sheet->width, (float)sheet->height};
@@ -182,7 +196,7 @@ static void draw_players(const Assets& assets, const SceneState& scene) {
         Rectangle dest;
         if (useFullFrame) {
             // Garde l'empreinte visuelle identique au sprite de base
-            dest = center_rect(pv.pos.x, pv.pos.y, 96 * ps, 184 * ps);
+            dest = center_rect(pv.pos.x, pv.pos.y, 200 * ps, 200 * ps);
         } else if (sheet == &assets.textures.playerBack) {
             float scale = 0.2f * ps;
             dest = center_rect(pv.pos.x, pv.pos.y, sheet->width * scale, sheet->height * scale);
@@ -201,7 +215,7 @@ static void draw_players(const Assets& assets, const SceneState& scene) {
         // Label Pn au-dessus (offset 15px gauche, 62px haut) basé sur l'id réel
         int labelId = pv.id;
         draw_bitmap_text(assets, TextFormat("P%d", labelId + 1), {pv.pos.x - 35.0f, pv.pos.y - 224.0f}, 22 * ps, 1, Color{255, 230, 200, 255});
-        if (pv.pulse > 0.01f) {
+        if (winPose && pv.pulse > 0.01f) {
             float alpha = std::min(1.0f, pv.pulse);
             DrawCircleGradient(pv.pos.x, pv.pos.y - 40, 36 + pv.pulse * 20.0f, ColorAlpha(YELLOW, alpha * 0.6f), BLANK);
         }
@@ -268,10 +282,10 @@ static void draw_symbol_box(Rectangle box, int sym, bool spinning, const Texture
 
 static void draw_slot_panel(const Assets& assets, const RenderSettings& cfg, const SceneState& scene, const CasinoSnap& snap) {
     float scale = gLayout.panelScale;
-    float rowH = 40.0f * scale;
+    float rowH = 46.0f * scale; // +6px
     float width = 520.0f * scale;
-    float startX = 20.0f + gLayout.panelOffsetX;
-    float gap = 12.0f * scale;
+    float startX = 10.0f + gLayout.panelOffsetX; // décale à gauche de 10px
+    float gap = 16.0f * scale; // plus d'espace entre cards
     float startY = cfg.height - (rowH + gap) * std::min(snap.playerCount, casino::MAX_PLAYERS) - 120.0f * scale + gLayout.panelOffsetY;
     int count = std::min(snap.playerCount, casino::MAX_PLAYERS);
     std::vector<int> order;
@@ -287,7 +301,8 @@ static void draw_slot_panel(const Assets& assets, const RenderSettings& cfg, con
         const auto& pv = scene.players[i];
         Rectangle row = {startX, startY + rowIdx * (rowH + gap), width, rowH};
         const Texture2D& panelTex = (assets.textures.goldPanel.id != 0) ? assets.textures.goldPanel : assets.textures.panel;
-        draw_panel_tex(panelTex, row, WHITE, Color{16, 32, 48, 180}, false);
+        const Texture2D& rowTex = (assets.textures.panelCleanRow.id != 0) ? assets.textures.panelCleanRow : panelTex;
+        draw_panel_tex(rowTex, row, WHITE, Color{16, 32, 48, 180}, false);
         int pid = scene.players[i].id;
         Color nameCol = pv.spinning ? YELLOW : RAYWHITE;
         draw_bitmap_text(assets, TextFormat("P%d", rowIdx + 1), {row.x + 8, row.y + 6 * scale}, 16 * scale, 1, nameCol);
@@ -299,7 +314,7 @@ static void draw_slot_panel(const Assets& assets, const RenderSettings& cfg, con
                 bounce = std::sin(age * 10.0f) * 3.0f * (1.0f - age / 1.2f);
             }
         }
-        draw_bitmap_text(assets, TextFormat("%+d", pv.lastDelta), {row.x + 60 * scale, row.y + (6 + bounce) * scale}, 14 * scale, 1, deltaCol);
+        draw_bitmap_text(assets, TextFormat("%+d", pv.lastDelta), {row.x + 60 * scale, row.y + (15 + bounce) * scale}, 14 * scale, 1, deltaCol);
         // Historique 5 blocs
         auto& hist = scene.history[pid];
         float blockW = 48.0f * scale;
@@ -319,13 +334,14 @@ static void draw_slot_panel(const Assets& assets, const RenderSettings& cfg, con
             draw_bitmap_text(assets, TextFormat("%+d", val), {b.x + 6 * scale, b.y + 6 * scale}, 16 * scale, 1, BLACK);
         }
 
-        float symW = 42.0f * scale;
-        float gapSym = 8.0f * scale;
-        float sx = row.x + row.width - (symW * 3 + gap * 2) - 12.0f * scale;
+        float symW = 42.0f * scale * 0.28f; // encore plus petit
+        float gapSym = 12.0f * scale;       // plus d'espace horizontal
+        float sx = row.x + row.width - (symW * 3 + gapSym * 2) - 18.0f * scale;
         for (int s = 0; s < 3; ++s) {
-            Rectangle box = {sx + s * (symW + gapSym), row.y + 4 * scale, symW, rowH - 8 * scale};
+            Rectangle box = {sx + s * (symW + gapSym), row.y + 8 * scale, symW, rowH - 16 * scale};
             int sym = displayed_symbol(pv, s, i);
-            draw_symbol_box(box, sym, pv.spinning, assets.textures);
+            bool spinning = !scene.gameOver && pv.spinning;
+            draw_symbol_box(box, sym, spinning, assets.textures);
         }
     }
 }
@@ -335,7 +351,7 @@ static void draw_ui(const Assets& assets, const CasinoSnap& snap, const SceneSta
     Color woodDark{84, 60, 36, 240};
     Color woodLight{128, 92, 48, 230};
     Color gold{220, 180, 80, 255};
-    const Texture2D& panelTex = (assets.textures.goldPanel.id != 0) ? assets.textures.goldPanel : assets.textures.panel;
+    const Texture2D& panelTex = (assets.textures.panelCleanLarge.id != 0) ? assets.textures.panelCleanLarge : (assets.textures.goldPanel.id != 0 ? assets.textures.goldPanel : assets.textures.panel);
 
     Rectangle bar = {20, 20 + gLayout.barOffsetY, (float)cfg.width - 40, 120 * scale};
     draw_panel_tex(panelTex, bar, WHITE, woodDark, false); // stretch le bandeau du haut
@@ -362,7 +378,8 @@ static void draw_ui(const Assets& assets, const CasinoSnap& snap, const SceneSta
 
     float logScale = gLayout.panelScale;
     Rectangle infoPanel = {(float)cfg.width - 260 * logScale - 20, (float)cfg.height - 100 * logScale + gLayout.logOffsetY, 260 * logScale, 80 * logScale};
-    draw_panel_tex(panelTex, infoPanel, WHITE, Color{90, 70, 40, 220}, false);
+    const Texture2D& infoTex = (assets.textures.panelCleanInfo.id != 0) ? assets.textures.panelCleanInfo : panelTex;
+    draw_panel_tex(infoTex, infoPanel, WHITE, Color{90, 70, 40, 220}, false);
     std::snprintf(buf, sizeof(buf), "Tick %llu", static_cast<unsigned long long>(snap.tick));
     draw_bitmap_text(assets, buf, {infoPanel.x + 14, infoPanel.y + 16 * logScale}, 20 * logScale, 1, Color{240, 230, 210, 255});
     std::snprintf(buf, sizeof(buf), "Players %d", snap.playerCount);
@@ -383,7 +400,8 @@ void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& sna
         DrawRectangle(0, 0, cfg.width, cfg.height, ColorAlpha(BLACK, 0.45f));
         Rectangle panel = center_rect(cfg.width * 0.5f, cfg.height * 0.5f, 640, 240);
         const Texture2D& panelTex = (assets.textures.goldPanel.id != 0) ? assets.textures.goldPanel : assets.textures.panel;
-        draw_panel_tex(panelTex, panel, WHITE, Color{40, 30, 20, 240}, false);
+        const Texture2D& overlayTex = (assets.textures.panelCleanOverlay.id != 0) ? assets.textures.panelCleanOverlay : panelTex;
+        draw_panel_tex(overlayTex, panel, WHITE, Color{40, 30, 20, 240}, false);
         draw_bitmap_text(assets, "PERDU", {panel.x + 190, panel.y + 84}, 64, 2, RED);
         draw_bitmap_text(assets, "BANQUE VIDE", {panel.x + 150, panel.y + 140}, 32, 1, WHITE);
     }

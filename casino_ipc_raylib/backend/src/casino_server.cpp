@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#include <semaphore.h>
 
 using namespace std::chrono_literals;
 
@@ -89,6 +90,13 @@ int main(int argc, char** argv) {
         std::cerr << "[server] failed to init shared state\n";
         casino::close_shared_memory(shm);
         return 1;
+    }
+
+    sem_unlink(casino::SEM_NAME);
+    sem_t* sem = sem_open(casino::SEM_NAME, O_CREAT, 0666, 0);
+    bool semOk = sem != SEM_FAILED;
+    if (!semOk) {
+        std::cerr << "[server] sem_open failed, continuing without semaphore wakeup\n";
     }
 
     mq_unlink(casino::MQ_NAME);
@@ -194,6 +202,18 @@ int main(int argc, char** argv) {
     };
 
     while (g_running) {
+        // Attendre un signal léger (semaphore) ou timeout pour éviter le busy loop
+        if (semOk) {
+            struct timespec ts{};
+            auto nowWake = std::chrono::steady_clock::now() + 16ms;
+            auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(nowWake.time_since_epoch()).count();
+            ts.tv_sec = static_cast<time_t>(ns / 1000000000);
+            ts.tv_nsec = static_cast<long>(ns % 1000000000);
+            sem_timedwait(sem, &ts); // ignore ETIMEDOUT/errors
+        } else {
+            std::this_thread::sleep_for(2ms);
+        }
+
         casino::BetMessage msg{};
         while (true) {
             ssize_t r = mq_receive(mq, reinterpret_cast<char*>(&msg), sizeof(msg), nullptr);
@@ -246,6 +266,10 @@ int main(int argc, char** argv) {
     }
 
     mq_close(mq);
+    if (semOk) {
+        sem_close(sem);
+        sem_unlink(casino::SEM_NAME);
+    }
     casino::close_shared_memory(shm);
     std::cout << "[server] stopped" << std::endl;
     return 0;

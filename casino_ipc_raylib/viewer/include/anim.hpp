@@ -34,6 +34,14 @@ struct SceneState {
     std::array<std::vector<int>, casino::MAX_PLAYERS> history; // dernières variations
     std::array<float, casino::MAX_PLAYERS> lastResultTime{};   // timestamp (GetTime) du dernier résultat
     std::array<bool, casino::MAX_PLAYERS> prevSpinning{};      // pour détecter fin de spin
+    std::array<bool, casino::MAX_PLAYERS> showWinPose{};       // sprite victoire actif ?
+    int totalBank = 0;                                         // cumul gains/pertes
+    bool bankInitialized = false;
+    bool jackpotInitialized = false;
+    int64_t jackpot = 0;
+    bool gameOver = false;
+    bool triggerWinSfx = false;
+    bool triggerEmptySfx = false;
 };
 
 void update_scene(SceneState& scene, const CasinoSnap& snap, float dt);

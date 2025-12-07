@@ -6,11 +6,26 @@
 #include <raymath.h>
 
 void update_scene(SceneState& scene, const CasinoSnap& snap, float dt) {
+    scene.triggerWinSfx = false;
+    scene.triggerEmptySfx = false;
+    scene.jackpot = snap.jackpot;
+    if (!scene.jackpotInitialized && snap.jackpot > 0) {
+        scene.jackpotInitialized = true;
+    }
+    if (!scene.gameOver && scene.jackpotInitialized && snap.jackpot <= 0) {
+        scene.triggerEmptySfx = true;
+        scene.gameOver = true;
+    }
     for (int i = 0; i < casino::MAX_PLAYERS; ++i) {
         auto& pv = scene.players[i];
         if (i < snap.playerCount) {
             int pid = snap.players[i].id;
-            if (pid < 0 || pid >= casino::MAX_PLAYERS) pid = i;
+            int slot = pid;
+            if (slot < 0 || slot >= casino::MAX_PLAYERS) slot = i;
+            int targetSlot = slot;
+            if (snap.playerCount > 0) {
+                targetSlot = (slot - 1 + snap.playerCount) % snap.playerCount; // décale la célébration sur le sprite précédent
+            }
             pv.active = true;
             const float offsetX = 260.0f - 62.0f; // base offset minus left shift
             const float offsetY = 150.0f + 60.0f; // conserve le décalage vertical précédent
@@ -30,18 +45,31 @@ void update_scene(SceneState& scene, const CasinoSnap& snap, float dt) {
             pv.spinning = snap.players[i].spinning != 0;
             pv.spinProgress = snap.players[i].spinProgress;
 
+            bool prevSpin = scene.prevSpinning[slot];
+            if (pv.spinning) {
+                // reroll: reset win pose to base sprite immediately
+                scene.showWinPose[slot] = false;
+                scene.showWinPose[targetSlot] = false;
+            }
+
             // détecter fin de spin pour historiser le delta
-            bool prevSpin = scene.prevSpinning[pid];
             if (prevSpin && !pv.spinning) {
                 float now = GetTime();
-                scene.lastResultTime[pid] = now;
-                auto& hist = scene.history[pid];
+                scene.lastResultTime[slot] = now;
+                auto& hist = scene.history[slot];
                 hist.push_back(pv.lastDelta);
                 if (hist.size() > 4) {
                     hist.erase(hist.begin(), hist.end() - 4);
                 }
+                // cumul global + sprite victoire
+                scene.totalBank += pv.lastDelta;
+                scene.bankInitialized = true;
+                scene.showWinPose[targetSlot] = pv.lastDelta > 0;
+                if (pv.lastDelta > 0) {
+                    scene.triggerWinSfx = true;
+                }
             }
-            scene.prevSpinning[pid] = pv.spinning;
+            scene.prevSpinning[slot] = pv.spinning;
         } else {
             pv.active = false;
         }

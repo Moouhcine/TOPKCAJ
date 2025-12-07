@@ -7,6 +7,7 @@ namespace casino {
 
 constexpr const char* SHM_NAME = "/casino_ipc_shared";
 constexpr const char* MQ_NAME = "/casino_ipc_mq";
+constexpr const char* SEM_NAME = "/casino_ipc_sem";
 constexpr int MAX_PLAYERS = 16;
 
 enum AnimState : int32_t {

@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <mqueue.h>
+#include <semaphore.h>
 
 namespace casino {
 
@@ -58,6 +59,7 @@ void close_shared_memory(SharedHandle& handle) {
 void unlink_ipc() {
     shm_unlink(SHM_NAME);
     mq_unlink(MQ_NAME);
+    sem_unlink(SEM_NAME);
 }
 
 bool initialize_state(SharedState* state) {

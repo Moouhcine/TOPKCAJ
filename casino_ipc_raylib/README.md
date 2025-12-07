@@ -2,6 +2,12 @@
 
 Mini-jeu démonstrateur d'IPC POSIX (mémoire partagée + mutex/process-shared + message queue) et viewer 2D Raylib 60 FPS. Deux exécutables backend (`casino_server`, `player`) pilotent l'état partagé ; un viewer Raylib lit cet état et affiche une salle de casino stylisée.
 
+## Principe / scénario
+- Un processus `casino_server` maintient l'état global dans une SHM POSIX : banque commune (jackpot), positions/états des joueurs, historique.
+- Chaque joueur est un **processus** séparé (`player <id>`) qui envoie ses mises via une file de messages POSIX vers le serveur. Tous partagent la même banque : un gain/crédit de l'un s'applique à tous.
+- Un processus viewer (`viewer`) se contente de lire la SHM sous mutex process-shared, de copier un snapshot et de l'afficher (les locks sont courts pour ne pas bloquer).
+- Le démonstrateur montre mémoire partagée + mutex partagé + MQ, sans threads internes côté backend.
+
 ## Dépendances
 - Ubuntu/Debian, g++ >= 9 (C++17)
 - POSIX IPC : `-pthread -lrt`
@@ -11,9 +17,14 @@ Mini-jeu démonstrateur d'IPC POSIX (mémoire partagée + mutex/process-shared +
 ## Arborescence
 ```
 casino_ipc_raylib/
-  backend/        # serveurs IPC + joueurs
-  viewer/         # viewer Raylib 2D
-  scripts/        # génération assets + helpers
+  backend/            # casino_server + player (processus distincts)
+  viewer/             # viewer Raylib 2D (lit la SHM)
+  assets/             # assets par défaut (PNG/MP3) utilisés au runtime
+  sprites/            # alternatives/custom assets (résolution via assets.cpp)
+  scripts/            # gen d'assets, run_demo, nettoyage IPC
+  scene.json/tmj      # layout exporté Tiled/LDtk (slots, UI)
+  layout.txt          # layout fallback texte
+  raylib/             # sources raylib (vendored, optionnel si libraylib-dev dispo)
 ```
 
 ## Compilation
@@ -56,9 +67,11 @@ Slots :
 
 ## Notes IPC
 - Mémoire partagée POSIX (`shm_open`) contenant l'état du casino + mutex process-shared (`pthread_mutexattr_setpshared`).
-- Message queue POSIX (`mq_open`) pour transmettre les mises des joueurs au serveur.
+- File de messages POSIX (`mq_open`) pour transmettre les mises des joueurs au serveur.
+- Sémaphore nommé (`/casino_ipc_sem`) utilisé pour réveiller le serveur quand un joueur poste un message (limite le busy-wait). Fallback automatique si le sémaphore n'est pas dispo.
 - Le viewer verrouille le mutex brièvement pour copier un snapshot local, garantissant un blocage minimal.
 - Assurez-vous que `/dev/mqueue` est monté (sinon : `sudo mount -t mqueue none /dev/mqueue`) pour que `mq_open` fonctionne. En environnement rootless, lancez `scripts/run_demo.sh` en dehors du sandbox si nécessaire.
+- En environnement VM/faible FPS, l'audio ambiant peut grésiller : un tampon audio plus large est configuré dans `viewer/src/main.cpp` via `SetAudioStreamBufferSizeDefault(8192)` avant `InitAudioDevice`.
 
 ## Level design externe (Tiled / LDtk)
 - Créez votre scène dans un éditeur 2D (Tiled conseillé). Ajoutez une couche d'objets "slots" avec des objets de type `slot` et les propriétés (float) : `slotScale`, `symbolScale`, `playerScale`, `windowW`, `windowH`, `windowOffsetX`, `windowOffsetY`. Placez les objets aux positions désirées.

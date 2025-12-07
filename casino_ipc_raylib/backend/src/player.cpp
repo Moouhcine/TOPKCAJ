@@ -6,6 +6,7 @@
 #include <mqueue.h>
 #include <random>
 #include <thread>
+#include <semaphore.h>
 
 using namespace std::chrono_literals;
 
@@ -24,6 +25,12 @@ int main(int argc, char** argv) {
     if (mq == static_cast<mqd_t>(-1)) {
         std::cerr << "[player] mq_open failed (server not running?)" << std::endl;
         return 1;
+    }
+
+    sem_t* sem = sem_open(casino::SEM_NAME, 0);
+    bool semOk = sem != SEM_FAILED;
+    if (!semOk) {
+        std::cerr << "[player] sem_open failed (server semaphore not ready), continuing without\n";
     }
 
     std::mt19937 rng(static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count()) + id * 31);
@@ -45,6 +52,8 @@ int main(int argc, char** argv) {
         msg.amount = betDist(rng);
         if (mq_send(mq, reinterpret_cast<const char*>(&msg), sizeof(msg), 0) != 0) {
             std::cerr << "[player] mq_send failed" << std::endl;
+        } else if (semOk) {
+            sem_post(sem); // réveille le serveur si endormi sur le sémaphore
         }
         int pause = basePauseMs + pauseJitter(rng);
         std::this_thread::sleep_for(std::chrono::milliseconds(pause));
