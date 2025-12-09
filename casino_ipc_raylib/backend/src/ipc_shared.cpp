@@ -9,12 +9,16 @@
 #include <unistd.h>
 #include <mqueue.h>
 #include <semaphore.h>
+#include <new>
+#include <errno.h>
 
 namespace casino {
 
 std::optional<SharedHandle> open_shared_memory(bool owner) {
     int flags = O_RDWR;
     if (owner) {
+        // ensure we start fresh
+        shm_unlink(SHM_NAME);
         flags |= O_CREAT;
     }
     int fd = shm_open(SHM_NAME, flags, 0666);
@@ -64,6 +68,8 @@ void unlink_ipc() {
 
 bool initialize_state(SharedState* state) {
     if (!state) return false;
+    // value-initialize SharedState in-place to ensure deterministic fields
+    new (state) SharedState();
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) != 0) {
         return false;
@@ -72,6 +78,10 @@ bool initialize_state(SharedState* state) {
         pthread_mutexattr_destroy(&attr);
         return false;
     }
+    #ifdef PTHREAD_MUTEX_ROBUST
+    // Make the mutex robust so another process crash won't permanently lock it
+    pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST);
+    #endif
     if (pthread_mutex_init(&state->mutex, &attr) != 0) {
         pthread_mutexattr_destroy(&attr);
         return false;
@@ -91,3 +101,4 @@ bool initialize_state(SharedState* state) {
 }
 
 } // namespace casino
+

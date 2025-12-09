@@ -7,6 +7,12 @@
 #include <vector>
 #include <cctype>
 #include "layout_config.hpp"
+#include "ipc_attach.hpp"
+#include <semaphore.h>
+#include <mqueue.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <chrono>
 
 static Rectangle center_rect(float cx, float cy, float w, float h) {
     return {cx - w * 0.5f, cy - h * 0.5f, w, h};
@@ -386,7 +392,132 @@ static void draw_ui(const Assets& assets, const CasinoSnap& snap, const SceneSta
     draw_bitmap_text(assets, buf, {infoPanel.x + 14, infoPanel.y + 42 * logScale}, 18 * logScale, 1, Color{220, 200, 170, 255});
 }
 
-void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& snap, const RenderSettings& cfg) {
+// Forward-declare SharedAttachment to avoid header circularities
+struct SharedAttachment;
+
+static void draw_tableau(const Assets& assets, const RenderSettings& cfg, const CasinoSnap& snap, SceneState& scene, SharedAttachment* att) {
+    // position panel to the right, similar width to player panel
+    float scale = gLayout.panelScale;
+    float width = 520.0f * scale;
+    float height = 320.0f * scale;
+    float x = cfg.width - width - 20.0f;
+    float y = cfg.height * 0.25f;
+
+    Rectangle panel = {x, y, width, height};
+    // Apply requested offsets: base move +160px right/+400px down, plus user tweak +70 right and -30 up
+    panel.x += 220.0f; // 160 + 70
+    panel.y += 250.0f; // 400 - 30 - 60 (moved up 60px)
+    // Draw the 640x240 panel (prefer panelCleanOverlay) without rotation so UI text aligns inside it.
+    if (assets.textures.panelCleanOverlay.id != 0) {
+        draw_panel_tex(assets.textures.panelCleanOverlay, panel, WHITE, Color{26, 34, 44, 220}, false);
+    } else {
+        const Texture2D& panelTex = (assets.textures.panelCleanInfo.id != 0) ? assets.textures.panelCleanInfo : assets.textures.panel;
+        draw_panel_tex(panelTex, panel, WHITE, Color{26, 34, 44, 220}, false);
+    }
+
+    // Title
+    draw_bitmap_text(assets, "TABLEAU IPC", {panel.x + 12, panel.y + 8}, 18 * scale, 1, Color{240, 230, 210, 255});
+
+    float lineY = panel.y + 36.0f * scale;
+    float lh = 20.0f * scale;
+
+    // Show snapshot info
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "Players: %d", snap.playerCount);
+    draw_bitmap_text(assets, buf, {panel.x + 12, lineY}, 16 * scale, 1, RAYWHITE);
+    lineY += lh;
+    std::snprintf(buf, sizeof(buf), "Jackpot: %lld", static_cast<long long>(snap.jackpot));
+    draw_bitmap_text(assets, buf, {panel.x + 12, lineY}, 16 * scale, 1, RAYWHITE);
+    lineY += lh;
+    std::snprintf(buf, sizeof(buf), "Rounds: %d", snap.rounds);
+    draw_bitmap_text(assets, buf, {panel.x + 12, lineY}, 16 * scale, 1, RAYWHITE);
+    lineY += lh;
+
+    // Prefer server-published instrumentation for mutex state (more reliable)
+    bool mutexPresent = false;
+    bool mutexLocked = false;
+    if (att && att->valid && att->state) {
+        mutexPresent = true;
+        // Use a debounce window based on the last-held timestamp to detect recent activity.
+        uint64_t nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        const uint64_t thresholdMs = 200; // if server held mutex within last 200ms, show as LOCKED
+        uint64_t last = snap.mutex_last_held_ts;
+        if (last != 0 && nowMs >= last && (nowMs - last) <= thresholdMs) {
+            mutexLocked = true;
+        } else {
+            mutexLocked = false;
+        }
+    } else {
+        // Fallback: attempt trylock if we have access
+        if (att && att->state) {
+            int r = pthread_mutex_trylock(&att->state->mutex);
+            if (r == 0) {
+                pthread_mutex_unlock(&att->state->mutex);
+                mutexPresent = true;
+                mutexLocked = false;
+            } else if (r == EBUSY) {
+                mutexPresent = true;
+                mutexLocked = true;
+            }
+        }
+    }
+    if (mutexPresent) {
+        draw_bitmap_text(assets, std::string("Mutex: ") + (mutexLocked ? "LOCKED" : "UNLOCKED"), {panel.x + 12, lineY}, 16 * scale, 1, mutexLocked ? Color{255,120,120,255} : Color{120,255,140,255});
+    } else {
+        draw_bitmap_text(assets, "Mutex: unavailable", {panel.x + 12, lineY}, 16 * scale, 1, Color{200,200,200,255});
+    }
+    lineY += lh;
+
+    // Semaphore: try open and read value
+    bool semOk = false;
+    int semVal = 0;
+    sem_t* sem = sem_open(casino::SEM_NAME, 0);
+    if (sem != SEM_FAILED) {
+        semOk = true;
+        sem_getvalue(sem, &semVal);
+        sem_close(sem);
+    }
+    if (semOk) {
+        std::snprintf(buf, sizeof(buf), "Semaphore(%s): %d", casino::SEM_NAME, semVal);
+        draw_bitmap_text(assets, buf, {panel.x + 12, lineY}, 14 * scale, 1, Color{200,220,255,255});
+    } else {
+        draw_bitmap_text(assets, std::string("Semaphore: unavailable"), {panel.x + 12, lineY}, 14 * scale, 1, Color{160,160,160,255});
+    }
+    lineY += lh;
+
+    // Message queue presence
+    bool mqOk = false;
+    long mqMsgs = -1;
+    mqd_t mq = mq_open(casino::MQ_NAME, O_RDONLY | O_NONBLOCK);
+    if (mq != static_cast<mqd_t>(-1)) {
+        mqOk = true;
+        struct mq_attr attr{};
+        mq_getattr(mq, &attr);
+        mqMsgs = attr.mq_curmsgs;
+        mq_close(mq);
+    }
+    if (mqOk) {
+        std::snprintf(buf, sizeof(buf), "MessageQueue(%s): %ld msgs", casino::MQ_NAME, mqMsgs);
+        draw_bitmap_text(assets, buf, {panel.x + 12, lineY}, 14 * scale, 1, Color{200,220,255,255});
+    } else {
+        draw_bitmap_text(assets, std::string("MessageQueue: unavailable"), {panel.x + 12, lineY}, 14 * scale, 1, Color{160,160,160,255});
+    }
+    lineY += lh + 6;
+
+    // Per-player detailed rows
+    draw_bitmap_text(assets, "Players (id : lastDelta / spinning)", {panel.x + 12, lineY}, 14 * scale, 1, Color{220,220,220,255});
+    lineY += lh;
+    int showCount = std::min(snap.playerCount, 10);
+    for (int i = 0; i < showCount; ++i) {
+        const auto& p = snap.players[i];
+        std::snprintf(buf, sizeof(buf), "P%d: %+d %s", p.id + 1, p.lastDelta, p.spinning ? "(spinning)" : "");
+        draw_bitmap_text(assets, buf, {panel.x + 18, lineY}, 14 * scale, 1, Color{200,200,200,255});
+        lineY += lh;
+        if (lineY > panel.y + panel.height - 24.0f) break;
+    }
+}
+
+void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& snap, const RenderSettings& cfg, SharedAttachment* att) {
     BeginDrawing();
     ClearBackground(Color{10, 20, 30, 255});
 
@@ -396,6 +527,8 @@ void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& sna
     draw_confetti(scene);
     draw_slot_panel(assets, cfg, scene, snap);
     draw_ui(assets, snap, scene, cfg);
+    // Draw right-side tableau showing server / IPC state
+    draw_tableau(assets, cfg, snap, scene, att);
     if (scene.gameOver) {
         DrawRectangle(0, 0, cfg.width, cfg.height, ColorAlpha(BLACK, 0.45f));
         Rectangle panel = center_rect(cfg.width * 0.5f, cfg.height * 0.5f, 640, 240);
@@ -407,4 +540,24 @@ void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& sna
     }
 
     EndDrawing();
+}
+
+void render_scene_no_begin(const Assets& assets, SceneState& scene, const CasinoSnap& snap, const RenderSettings& cfg, SharedAttachment* att) {
+    // same drawing ops as render_frame but without BeginDrawing/EndDrawing
+    draw_room(assets, cfg, scene);
+    draw_slots(assets, cfg, snap, scene);
+    draw_players(assets, scene);
+    draw_confetti(scene);
+    draw_slot_panel(assets, cfg, scene, snap);
+    draw_ui(assets, snap, scene, cfg);
+    draw_tableau(assets, cfg, snap, scene, att);
+    if (scene.gameOver) {
+        DrawRectangle(0, 0, cfg.width, cfg.height, ColorAlpha(BLACK, 0.45f));
+        Rectangle panel = center_rect(cfg.width * 0.5f, cfg.height * 0.5f, 640, 240);
+        const Texture2D& panelTex = (assets.textures.goldPanel.id != 0) ? assets.textures.goldPanel : assets.textures.panel;
+        const Texture2D& overlayTex = (assets.textures.panelCleanOverlay.id != 0) ? assets.textures.panelCleanOverlay : panelTex;
+        draw_panel_tex(overlayTex, panel, WHITE, Color{40, 30, 20, 240}, false);
+        draw_bitmap_text(assets, "PERDU", {panel.x + 190, panel.y + 84}, 64, 2, RED);
+        draw_bitmap_text(assets, "BANQUE VIDE", {panel.x + 150, panel.y + 140}, 32, 1, WHITE);
+    }
 }

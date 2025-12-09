@@ -14,4 +14,7 @@ struct RenderSettings {
 void set_layout_params(const LayoutParams& params);
 void set_slot_layout(int idx, const SlotLayout& slot);
 void set_slot_position(int idx, Vector2 pos);
-void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& snap, const RenderSettings& cfg);
+struct SharedAttachment;
+void render_frame(const Assets& assets, SceneState& scene, const CasinoSnap& snap, const RenderSettings& cfg, SharedAttachment* att);
+// Render scene contents without calling BeginDrawing()/EndDrawing().
+void render_scene_no_begin(const Assets& assets, SceneState& scene, const CasinoSnap& snap, const RenderSettings& cfg, SharedAttachment* att);

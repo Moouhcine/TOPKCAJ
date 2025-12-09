@@ -13,6 +13,20 @@ static Texture2D try_load_texture(const fs::path& path, bool& ok) {
     if (fs::exists(path)) {
         tex = LoadTexture(path.string().c_str());
         if (tex.id != 0) {
+            // If the texture is extremely large, downscale it to avoid GPU/driver problems
+            const int MAX_DIM = 2048;
+            if (tex.width > MAX_DIM || tex.height > MAX_DIM) {
+                std::cout << "[assets] large texture detected (" << tex.width << "x" << tex.height << ") for " << path << ", downscaling to max " << MAX_DIM << "\n";
+                UnloadTexture(tex);
+                Image img = LoadImage(path.string().c_str());
+                // compute scaled dimensions preserving aspect
+                float scale = std::min(1.0f, (float)MAX_DIM / (float)std::max(img.width, img.height));
+                int newW = std::max(1, (int)(img.width * scale));
+                int newH = std::max(1, (int)(img.height * scale));
+                ImageResize(&img, newW, newH);
+                tex = LoadTextureFromImage(img);
+                UnloadImage(img);
+            }
             ok = true;
             SetTextureFilter(tex, TEXTURE_FILTER_BILINEAR);
         }
@@ -124,6 +138,15 @@ Assets load_assets(const std::string& basePath) {
     a.textures.panelCleanInfo = try_load_texture(fs::path(basePath) / "panel_clean_260x80.png", texOk);
     a.textures.panelCleanOverlay = try_load_texture(fs::path(basePath) / "panel_clean_640x240.png", texOk);
     a.textures.button = try_load_texture(resolve("sprites/ui/button.png"), texOk);
+    a.textures.mainMenu = try_load_texture(fs::path(basePath) / "main_menu.png", texOk);
+    a.textures.cursor = try_load_texture(fs::path(basePath) / "cursor.png", texOk);
+    a.textures.tableau = try_load_texture(fs::path(basePath) / "tableau.png", texOk);
+    a.textures.helpScreenshot = try_load_texture(fs::path(basePath) / "capture_ecran.png", texOk);
+    if (a.textures.helpScreenshot.id != 0) {
+        std::cout << "[assets] loaded help screenshot: " << (fs::path(basePath) / "capture_ecran.png") << "\n";
+    } else {
+        std::cout << "[assets] help screenshot not found or failed to load: " << (fs::path(basePath) / "capture_ecran.png") << "\n";
+    }
     a.textures.coin = try_load_texture(resolve("sprites/ui/icon_coin.png"), texOk);
     a.textures.playerIdle = try_load_texture(resolve("sprites/players/player_idle.png"), texOk);
     a.textures.playerWalk = try_load_texture(resolve("sprites/players/player_walk.png"), texOk);
@@ -216,6 +239,10 @@ void unload_assets(Assets& assets) {
     unload(assets.textures.panelCleanRow);
     unload(assets.textures.panelCleanInfo);
     unload(assets.textures.panelCleanOverlay);
+    unload(assets.textures.mainMenu);
+    unload(assets.textures.cursor);
+    unload(assets.textures.tableau);
+    unload(assets.textures.helpScreenshot);
 
     if (assets.hasFont && assets.uiFont.baseSize > 0) {
         UnloadFont(assets.uiFont);

@@ -130,15 +130,18 @@ int main(int argc, char** argv) {
         load_layout("layout.txt", targets, playerCount);
     }
 
-    pthread_mutex_lock(&shm.state->mutex);
+    if (!casino::safe_mutex_lock(&shm.state->mutex)) {
+        std::cerr << "[server] failed to lock mutex during init\n";
+    }
     shm.state->playerCount = playerCount;
-    shm.state->jackpot = 600; // banque initiale: 6 joueurs * 5 tours * coût fixe
+    shm.state->jackpot = 1200; // banque initiale: doubled from 600
     for (int i = 0; i < playerCount; ++i) {
         shm.state->players[i].id = i;
         shm.state->players[i].x = targets[i].x;
         shm.state->players[i].y = targets[i].y;
         shm.state->players[i].animState = casino::ANIM_IDLE;
         shm.state->players[i].pulse = 0.0f;
+        shm.state->players[i].pid = -1;
     }
     pthread_mutex_unlock(&shm.state->mutex);
 
@@ -181,7 +184,12 @@ int main(int argc, char** argv) {
         int payout = win ? payouts[symA] : 0;
         int delta = payout - SPIN_COST;
 
-        pthread_mutex_lock(&shm.state->mutex);
+        if (!casino::safe_mutex_lock(&shm.state->mutex)) {
+            std::cerr << "[server] failed to lock mutex for spin\n";
+        }
+        shm.state->mutex_held = 1;
+        // record epoch ms when mutex was acquired
+        shm.state->mutex_last_held_ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
         shm.state->tick++;
         shm.state->rounds++;
         shm.state->jackpot += delta;
@@ -198,6 +206,7 @@ int main(int argc, char** argv) {
         p.pulse = win ? 1.0f : 0.3f;
         shm.state->lastWinnerId = win ? playerId : -1;
         shm.state->lastWinAmount = payout;
+        shm.state->mutex_held = 0;
         pthread_mutex_unlock(&shm.state->mutex);
     };
 
@@ -247,7 +256,11 @@ int main(int argc, char** argv) {
         float dt = std::chrono::duration<float>(now - lastPulseDecay).count();
         lastPulseDecay = now;
 
-        pthread_mutex_lock(&shm.state->mutex);
+        if (!casino::safe_mutex_lock(&shm.state->mutex)) {
+            std::cerr << "[server] failed to lock mutex for periodic update\n";
+        }
+        shm.state->mutex_held = 1;
+        shm.state->mutex_last_held_ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
         shm.state->tick++;
         for (int i = 0; i < shm.state->playerCount; ++i) {
             auto& p = shm.state->players[i];
@@ -260,6 +273,17 @@ int main(int argc, char** argv) {
             }
             p.pulse = std::max(0.0f, p.pulse - 0.6f * dt);
         }
+        // update instrumentation: semaphore value + mq count
+        if (semOk) {
+            int sval = 0;
+            sem_getvalue(sem, &sval);
+            shm.state->sem_value = sval;
+        }
+        struct mq_attr curAttr{};
+        if (mq_getattr(mq, &curAttr) == 0) {
+            shm.state->mq_count = static_cast<int32_t>(curAttr.mq_curmsgs);
+        }
+        shm.state->mutex_held = 0;
         pthread_mutex_unlock(&shm.state->mutex);
 
         std::this_thread::sleep_for(16ms);

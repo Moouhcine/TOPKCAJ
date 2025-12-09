@@ -28,6 +28,7 @@ struct PlayerState {
     int32_t spinning = 0;           // 1 while animating
     float spinProgress = 0.0f;      // 0..1 over 3s window
     int32_t lastPayout = 0;
+    int32_t pid = -1;               // player process id (written by player)
 };
 
 struct SharedState {
@@ -39,6 +40,11 @@ struct SharedState {
     int32_t lastWinAmount = 0;
     int32_t playerCount = 0;
     PlayerState players[MAX_PLAYERS];
+    // Instrumentation fields for viewer diagnostics
+    int32_t mutex_held = 0;   // set to 1 by server while holding the mutex
+    uint64_t mutex_last_held_ts = 0; // epoch ms when mutex was last held by server
+    int32_t sem_value = 0;    // last observed semaphore value
+    int32_t mq_count = 0;     // last observed number of messages in MQ
 };
 
 struct BetMessage {

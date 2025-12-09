@@ -1,8 +1,7 @@
 *.o
 *.ppm
 *.png
-/backend/casino_server
-/backend/player
-/viewer/viewer
 __pycache__/
 *.pyc
+/casino_ipc_pygame
+/pygame_viewer

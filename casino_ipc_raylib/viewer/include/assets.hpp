@@ -25,6 +25,10 @@ struct TexturePack {
     Texture2D panelCleanInfo{};
     Texture2D panelCleanOverlay{};
     Texture2D button{};
+    Texture2D mainMenu{};     // full-screen main menu image (clickable zones overlayed)
+    Texture2D cursor{};      // tutorial cursor image
+    Texture2D tableau{};     // right-side tableau panel image
+    Texture2D helpScreenshot{}; // optional help screenshot (capture_ecran.png)
     Texture2D coin{};
     Texture2D playerIdle{};
     Texture2D playerWalk{};

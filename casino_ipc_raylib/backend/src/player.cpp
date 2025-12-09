@@ -7,6 +7,7 @@
 #include <random>
 #include <thread>
 #include <semaphore.h>
+#include <unistd.h>
 
 using namespace std::chrono_literals;
 
@@ -47,6 +48,19 @@ int main(int argc, char** argv) {
 
     casino::BetMessage msg{};
     msg.playerId = id;
+
+    // Try to attach to shared memory and write our pid for diagnostics
+    auto shOpt = casino::open_shared_memory(false);
+    if (shOpt) {
+        auto sh = *shOpt;
+        if (sh.state) {
+            if (casino::safe_mutex_lock(&sh.state->mutex)) {
+                if (id >= 0 && id < casino::MAX_PLAYERS) sh.state->players[id].pid = static_cast<int32_t>(getpid());
+                pthread_mutex_unlock(&sh.state->mutex);
+            }
+        }
+        casino::close_shared_memory(sh);
+    }
 
     while (true) {
         msg.amount = betDist(rng);
